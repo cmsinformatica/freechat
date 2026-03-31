@@ -5,7 +5,6 @@ import dotenv from "dotenv";
 import cors from "cors";
 import fs from "fs";
 import multer from "multer";
-import pdf from "pdf-parse";
 
 dotenv.config();
 
@@ -20,98 +19,155 @@ interface DocumentChunk {
   id: string;
   documentId: string;
   content: string;
-  page?: number;
+  page: number;
+  tokens: number;
 }
 
 interface Document {
   id: string;
   name: string;
   uploadedAt: number;
+  totalPages: number;
+  totalTokens: number;
   chunks: DocumentChunk[];
 }
 
 const documents: Document[] = [];
 const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-const upload = multer({ dest: UPLOAD_DIR });
+const upload = multer({ 
+  dest: UPLOAD_DIR,
+  limits: { fileSize: MAX_FILE_SIZE }
+});
 
-function extractTextFromPDF(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const dataBuffer = fs.readFileSync(filePath);
-    pdf(dataBuffer)
-      .then((data) => resolve(data.text))
-      .catch(reject);
-  });
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
 }
 
-function createChunks(text: string, documentId: string, chunkSize = 500): DocumentChunk[] {
-  const chunks: DocumentChunk[] = [];
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  let currentChunk = '';
-  let pageNum = 1;
+function calculateSimilarity(query: string, chunk: string): number {
+  const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const chunkWords = chunk.toLowerCase().split(/\s+/);
   
-  for (const sentence of sentences) {
-    if ((currentChunk.length + sentence.length > chunkSize) && currentChunk.length > 0) {
-      chunks.push({
-        id: `${documentId}-${chunks.length}`,
-        documentId,
-        content: currentChunk.trim(),
-        page: pageNum
-      });
-      currentChunk = sentence;
-      pageNum = Math.ceil(chunks.length * chunkSize / 1000) + 1;
-    } else {
-      currentChunk += ' ' + sentence;
+  let score = 0;
+  let matches = 0;
+  
+  for (const word of queryWords) {
+    if (chunkWords.includes(word)) {
+      matches++;
+      const position = chunkWords.indexOf(word);
+      score += (chunkWords.length - position) / chunkWords.length;
     }
   }
   
-  if (currentChunk.trim()) {
-    chunks.push({
-      id: `${documentId}-${chunks.length}`,
-      documentId,
-      content: currentChunk.trim(),
-      page: pageNum
-    });
+  if (queryWords.length > 0) {
+    return (matches / queryWords.length) * 0.7 + (score / queryWords.length) * 0.3;
+  }
+  
+  return 0;
+}
+
+function searchContext(query: string, topK = 5): { content: string; sources: { name: string; page: number }[] } {
+  if (documents.length === 0) {
+    return { content: '', sources: [] };
+  }
+  
+  const allChunks = documents.flatMap(d => d.chunks.map(c => ({
+    ...c,
+    documentName: d.name
+  })));
+  
+  const scoredChunks = allChunks.map(chunk => ({
+    chunk,
+    score: calculateSimilarity(query, chunk.content)
+  }));
+  
+  const topChunks = scoredChunks
+    .filter(s => s.score > 0.1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
+  
+  if (topChunks.length === 0) {
+    return { content: '', sources: [] };
+  }
+  
+  const content = topChunks.map(c => c.chunk.content).join('\n\n---\n\n');
+  const sources = topChunks.map(c => ({
+    name: c.chunk.documentName,
+    page: c.chunk.page
+  }));
+  
+  return { content, sources };
+}
+
+function createChunksFromText(text: string, documentId: string, documentName: string): DocumentChunk[] {
+  const chunks: DocumentChunk[] = [];
+  const chunkSize = 1000;
+  const overlap = 100;
+  
+  let start = 0;
+  let chunkIndex = 0;
+  
+  while (start < text.length) {
+    let end = Math.min(start + chunkSize, text.length);
+    
+    if (end < text.length && end < text.lastIndexOf('.', end)) {
+      end = text.lastIndexOf('.', end) + 1;
+    }
+    
+    const content = text.slice(start, end).trim();
+    
+    if (content.length > 50) {
+      chunks.push({
+        id: `${documentId}-${chunkIndex}`,
+        documentId,
+        content,
+        page: chunkIndex + 1,
+        tokens: estimateTokens(content)
+      });
+    }
+    
+    start = end - overlap;
+    chunkIndex++;
   }
   
   return chunks;
 }
 
-function searchContext(query: string, topK = 3): string {
-  if (documents.length === 0) return '';
+async function extractTextFromPDF(filePath: string): Promise<{ text: string; pages: number }> {
+  const pdfjs = await import('pdfjs-dist');
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
   
-  const queryLower = query.toLowerCase();
-  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+  const data = new Uint8Array(fs.readFileSync(filePath));
+  const pdf = await pdfjs.getDocument({ data }).promise;
   
-  const allChunks = documents.flatMap(d => d.chunks);
+  let fullText = '';
+  const totalPages = pdf.numPages;
   
-  const scoredChunks = allChunks.map(chunk => {
-    const contentLower = chunk.content.toLowerCase();
-    let score = 0;
+  const batchSize = 10;
+  for (let i = 1; i <= totalPages; i += batchSize) {
+    const batchEnd = Math.min(i + batchSize - 1, totalPages);
+    console.log(`  📄 Extraindo páginas ${i}-${batchEnd} de ${totalPages}...`);
     
-    for (const word of queryWords) {
-      if (contentLower.includes(word)) {
-        score += 1;
-        const count = (contentLower.match(new RegExp(word, 'g')) || []).length;
-        score += count * 0.5;
+    for (let pageNum = i; pageNum <= batchEnd; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item: any) => item.str)
+        .filter(str => str.trim())
+        .join(' ');
+      
+      if (pageText.trim()) {
+        fullText += pageText + '\n\n';
       }
     }
-    
-    return { chunk, score };
-  });
+  }
   
-  const topChunks = scoredChunks
-    .filter(s => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
-  
-  if (topChunks.length === 0) return '';
-  
-  return topChunks.map(s => s.chunk.content).join('\n\n');
+  return { text: fullText, pages: totalPages };
 }
 
 const OPENROUTER_MODELS: ModelInfo[] = [
@@ -224,7 +280,16 @@ async function startServer() {
   });
 
   app.get('/api/documents', (req, res) => {
-    res.json({ documents: documents.map(d => ({ id: d.id, name: d.name, uploadedAt: d.uploadedAt })) });
+    res.json({ 
+      documents: documents.map(d => ({ 
+        id: d.id, 
+        name: d.name, 
+        pages: d.totalPages,
+        tokens: d.totalTokens,
+        chunks: d.chunks.length,
+        uploadedAt: d.uploadedAt 
+      })) 
+    });
   });
 
   app.delete('/api/documents/:id', (req, res) => {
@@ -244,16 +309,34 @@ async function startServer() {
         return res.status(400).json({ error: 'Nenhum arquivo enviado' });
       }
 
+      const fileSize = req.file.size;
+      if (fileSize > MAX_FILE_SIZE) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: `Arquivo muito grande. Máximo: ${MAX_FILE_SIZE / 1024 / 1024}MB` });
+      }
+
       const filePath = req.file.path;
-      const text = await extractTextFromPDF(filePath);
+      const fileName = req.file.originalname;
+      
+      console.log(`📄 Processando: ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
+      
+      const { text, pages } = await extractTextFromPDF(filePath);
+      
+      console.log(`✅ Texto extraído: ${text.length} caracteres, ${pages} páginas`);
       
       const documentId = Date.now().toString();
-      const chunks = createChunks(text, documentId);
+      const chunks = createChunksFromText(text, documentId, fileName);
+      
+      const totalTokens = chunks.reduce((sum, c) => sum + c.tokens, 0);
+      
+      console.log(`📊 Criados ${chunks.length} chunks (${totalTokens} tokens)`);
       
       const doc: Document = {
         id: documentId,
-        name: req.file.originalname,
+        name: fileName,
         uploadedAt: Date.now(),
+        totalPages: pages,
+        totalTokens,
         chunks
       };
       
@@ -263,7 +346,13 @@ async function startServer() {
       
       res.json({ 
         success: true, 
-        document: { id: doc.id, name: doc.name, chunks: chunks.length }
+        document: { 
+          id: doc.id, 
+          name: doc.name, 
+          pages: doc.totalPages,
+          tokens: doc.totalTokens,
+          chunks: chunks.length 
+        }
       });
     } catch (error: any) {
       console.error('Upload error:', error);
@@ -301,14 +390,19 @@ async function startServer() {
       const lastMessage = messages[messages.length - 1]?.content || '';
       
       let enrichedMessages = [...messages];
+      let ragContext = null;
       
       if (useRag && documents.length > 0) {
-        const context = searchContext(lastMessage);
+        const { content: context, sources } = searchContext(lastMessage, 5);
         
         if (context) {
-          const systemPrompt = `Você é um assistente de IA. Use o contexto abaixo para responder as perguntas. Se a resposta não estiver no contexto, responda normalmente baseado em seu conhecimento.
+          ragContext = { sources };
+          
+          const systemPrompt = `Você é um assistente de IA. Use APENAS o contexto abaixo para responder as perguntas.
 
-Contexto relevante dos documentos:
+Se a resposta NÃO estiver no contexto, responda que não sabe com base no documento.
+
+Contexto relevante:
 ${context}
 
 ---`;
@@ -378,7 +472,7 @@ ${context}
           res.end();
         } else {
           const data = await fallbackResponse.json();
-          res.json({ ...data, model: fallbackModel });
+          res.json({ ...data, model: fallbackModel, ragContext });
         }
         return;
       }
@@ -401,7 +495,7 @@ ${context}
         res.end();
       } else {
         const data = await response.json();
-        res.json({ ...data, model: selectedModel });
+        res.json({ ...data, model: selectedModel, ragContext });
       }
     } catch (error: any) {
       console.error("Chat API Error:", error);
