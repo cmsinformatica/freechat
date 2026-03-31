@@ -35,7 +35,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 export default function App() {
-  const { messages, sendMessage, isLoading, currentModel, error, clearChat } = useChat();
+  const { messages, sessions, currentSessionId, isLoading, currentModel, error, clearChat, createNewSession, selectSession, deleteSession, sendMessage } = useChat();
   const [input, setInput] = useState('');
   const [attachment, setAttachment] = useState<{ name: string; content: string } | null>(null);
   const [isReadingFile, setIsReadingFile] = useState(false);
@@ -160,7 +160,7 @@ export default function App() {
           </div>
           
           <button 
-            onClick={clearChat}
+            onClick={createNewSession}
             className="w-full flex items-center gap-2 px-3 py-2 border border-[var(--text-primary)] hover:bg-[var(--text-primary)] hover:text-[var(--bg-primary)] transition-colors duration-200 text-sm font-medium"
           >
             <Plus size={16} />
@@ -169,14 +169,37 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          <div className="text-[11px] font-serif italic opacity-50 uppercase tracking-widest mb-2">Histórico</div>
-          {messages.length === 0 ? (
-            <div className="text-xs opacity-40 italic">Nenhuma mensagem ainda...</div>
+          <div className="text-[11px] font-serif italic opacity-50 uppercase tracking-widest mb-2">Conversas</div>
+          {sessions.length === 0 ? (
+            <div className="text-xs opacity-40 italic">Nenhuma conversa ainda...</div>
           ) : (
             <div className="space-y-1">
-              <div className="px-3 py-2 bg-[var(--text-primary)] text-[var(--bg-primary)] text-sm truncate cursor-default">
-                Sessão Atual
-              </div>
+              {sessions.map((session) => (
+                <div 
+                  key={session.id}
+                  className={cn(
+                    "group flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-[var(--text-primary)]/5 transition-colors",
+                    currentSessionId === session.id 
+                      ? "bg-[var(--text-primary)] text-[var(--bg-primary)]" 
+                      : "truncate"
+                  )}
+                  onClick={() => selectSession(session.id)}
+                >
+                  <span className="truncate flex-1">{session.title}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteSession(session.id);
+                    }}
+                    className={cn(
+                      "opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500 hover:text-white transition-all",
+                      currentSessionId === session.id && "text-[var(--bg-primary)]"
+                    )}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </div>
