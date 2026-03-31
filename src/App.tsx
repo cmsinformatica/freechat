@@ -22,7 +22,9 @@ import {
   AlertCircle,
   Loader2,
   Sun,
-  Moon
+  Moon,
+  Upload,
+  File
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -46,8 +48,64 @@ export default function App() {
     const saved = localStorage.getItem('theme');
     return saved === 'dark';
   });
+  const [documents, setDocuments] = useState<{ id: string; name: string; chunks?: number }[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showDocuments, setShowDocuments] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+
+  const fetchDocuments = async () => {
+    try {
+      const res = await fetch('/api/documents');
+      const data = await res.json();
+      setDocuments(data.documents);
+    } catch (err) {
+      console.error('Error fetching documents:', err);
+    }
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setDocuments(prev => [...prev, { id: data.document.id, name: data.document.name, chunks: data.document.chunks }]);
+      } else {
+        alert('Erro ao fazer upload: ' + data.error);
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+      alert('Erro ao fazer upload do arquivo');
+    } finally {
+      setIsUploading(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteDocument = async (id: string) => {
+    try {
+      await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+      setDocuments(prev => prev.filter(d => d.id !== id));
+    } catch (err) {
+      console.error('Error deleting document:', err);
+    }
+  };
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
@@ -166,6 +224,14 @@ export default function App() {
             <Plus size={16} />
             Nova Conversa
           </button>
+          
+          <button 
+            onClick={() => setShowDocuments(!showDocuments)}
+            className="w-full flex items-center gap-2 px-3 py-2 mt-2 border border-[var(--text-primary)] hover:bg-[var(--text-primary)] hover:text-[var(--bg-primary)] transition-colors duration-200 text-sm font-medium"
+          >
+            <FileText size={16} />
+            Documentos ({documents.length})
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -205,6 +271,47 @@ export default function App() {
         </div>
 
         <div className="p-4 border-t border-[var(--text-primary)] space-y-4">
+          {showDocuments && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-serif italic opacity-50 uppercase tracking-widest">Arquivos</div>
+              
+              <input
+                type="file"
+                ref={uploadInputRef}
+                onChange={handleUpload}
+                accept=".pdf"
+                className="hidden"
+              />
+              <button
+                onClick={() => uploadInputRef.current?.click()}
+                disabled={isUploading}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[var(--text-primary)] text-[var(--bg-primary)] text-sm font-medium hover:opacity-80 disabled:opacity-50"
+              >
+                {isUploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
+                Upload PDF
+              </button>
+              
+              {documents.map(doc => (
+                <div key={doc.id} className="flex items-center justify-between p-2 bg-[var(--bg-secondary)] border border-[var(--text-primary)]/10 text-xs">
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <File size={12} />
+                    <span className="truncate">{doc.name}</span>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteDocument(doc.id)}
+                    className="p-1 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+              
+              {documents.length === 0 && (
+                <div className="text-xs opacity-40 italic">Nenhum documento</div>
+              )}
+            </div>
+          )}
+          
           <div className="flex items-center justify-between text-[10px] font-mono opacity-60 uppercase tracking-tighter">
             <span>Status: Online</span>
             <span className="flex items-center gap-1">
