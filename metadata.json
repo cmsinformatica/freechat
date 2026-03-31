@@ -1,0 +1,5 @@
+{
+  "name": "FreeAI Chat",
+  "description": "Interface de chat inteligente com roteamento automático entre modelos de IA gratuitos do OpenRouter e Groq.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  :root {
+    --bg-primary: #E4E3E0;
+    --bg-secondary: #ffffff;
+    --text-primary: #141414;
+    --text-secondary: #141414;
+    --border-color: #141414;
+    --border-opacity: 10;
+    --highlight: #141414;
+  }
+
+  .dark {
+    --bg-primary: #0f0f0f;
+    --bg-secondary: #1a1a1a;
+    --text-primary: #e4e3e0;
+    --text-secondary: #a0a0a0;
+    --border-color: #e4e3e0;
+    --border-opacity: 20;
+    --highlight: #e4e3e0;
+  }
+
+  body {
+    @apply bg-[var(--bg-primary)] text-[var(--text-primary)] transition-colors duration-300;
+  }
+}
+
+.prose {
+  @apply text-sm leading-relaxed;
+}
+
+.prose p {
+  @apply mb-4 last:mb-0;
+}
+
+.prose h1, .prose h2, .prose h3 {
+  @apply font-serif italic mt-6 mb-3 first:mt-0;
+}
+
+.prose h1 { @apply text-2xl; }
+.prose h2 { @apply text-xl; }
+.prose h3 { @apply text-lg; }
+
+.prose ul, .prose ol {
+  @apply mb-4 ml-6 list-outside;
+}
+
+.prose ul { @apply list-disc; }
+.prose ol { @apply list-decimal; }
+
+.prose li {
+  @apply mb-1;
+}
+
+.prose code {
+  @apply font-mono px-1 py-0.5 text-xs;
+  background-color: var(--bg-secondary);
+}
+
+.prose pre {
+  @apply p-4 my-4 overflow-x-auto font-mono text-xs;
+  background-color: var(--highlight);
+  color: var(--bg-primary);
+}
+
+.prose pre code {
+  @apply bg-transparent p-0;
+}
+
+.prose blockquote {
+  @apply border-l-2 pl-4 italic opacity-80 my-4;
+  border-color: var(--text-primary);
+}
+
+.prose table {
+  @apply w-full border-collapse my-4 text-xs;
+}
+
+.prose th, .prose td {
+  @apply border p-2 text-left;
+  border-color: var(--text-primary);
+}
+
+.prose th {
+  background-color: var(--bg-secondary);
+  @apply font-serif italic;
+}
+
+/* Dark mode specific prose adjustments */
+.dark .prose code {
+  @apply bg-white/10;
+}
+
+.dark .prose pre code {
+  @apply text-[var(--bg-primary)];
+}
+
+.dark .prose th {
+  @apply bg-white/5;
+}
+
+.dark .prose strong {
+  @apply text-[#e4e3e0];
+}
